@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Stock Analytics Hub</title>
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts@3.54.0/dist/apexcharts.min.js"></script>
+    <style>
+        :root {
+            --bg-1: #06131f;
+            --bg-2: #0f172a;
+            --panel: rgba(15, 23, 42, 0.82);
+            --panel-strong: rgba(15, 23, 42, 0.96);
+            --panel-border: rgba(148, 163, 184, 0.18);
+            --text: #e2e8f0;
+            --muted: #94a3b8;
+            --accent-blue: #38bdf8;
+            --accent-green: #34d399;
+            --accent-red: #ef4444;
+            --accent-orange: #fb923c;
+            --accent-purple: #8b5cf6;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at top left, rgba(56, 189, 248, 0.2), transparent 25%),
+                radial-gradient(circle at bottom right, rgba(52, 211, 153, 0.18), transparent 30%),
+                linear-gradient(135deg, var(--bg-1), var(--bg-2));
+            padding: 28px 18px 40px;
+        }
+
+        .app-shell {
+            max-width: 1380px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 240px minmax(0, 1fr);
+            gap: 22px;
+            align-items: start;
+        }
+
+        .sidebar {
+            position: sticky;
+            top: 20px;
+            background: rgba(15, 23, 42, 0.78);
+            border: 1px solid var(--panel-border);
+            border-radius: 26px;
+            padding: 20px 18px;
+            box-shadow: 0 18px 45px rgba(2, 6, 23, 0.42);
+            backdrop-filter: blur(12px);
+        }
+
+        .brand-block {
+            font-size: 0.72rem;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            color: var(--accent-blue);
+            margin-bottom: 25px;
+            font-weight: 800;
+        }
+
+        .side-nav {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .nav-item {
+            display: block;
+            padding: 12px 14px;
+            border-radius: 12px;
+            color: var(--muted);
+            text-decoration: none;
+            font-weight: 700;
+            transition: all 0.2s ease;
+        }
+
+        .nav-item:hover,
+        .nav-item.active {
+            background: linear-gradient(135deg, rgba(56, 189, 248, 0.14), rgba(52, 211, 153, 0.1));
+            color: var(--text);
+            border: 1px solid rgba(56, 189, 248, 0.25);
+        }
+
+        .mini-panel {
+            margin-top: 28px;
+            padding: 18px 16px;
+            border-radius: 18px;
+            background: linear-gradient(135deg, rgba(56, 189, 248, 0.1), rgba(52, 211, 153, 0.07));
+            border: 1px solid rgba(148, 163, 184, 0.2);
+        }
+
+        .mini-label {
+            color: var(--muted);
+            font-size: 0.68rem;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+        }
+
+        .mini-value {
+            font-size: 1.8rem;
+            font-weight: 800;
+            margin: 12px 0 8px;
+            letter-spacing: -0.05em;
+        }
+
+        .mini-trend {
+            font-size: 0.8rem;
+            font-weight: 700;
+        }
+
+        .mini-trend.positive {
+            color: var(--accent-green);
+        }
+
+        .content-panel {
+            min-width: 0;
+        }
+
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 22px;
+            background: rgba(15, 23, 42, 0.75);
+            border: 1px solid var(--panel-border);
+            border-radius: 22px;
+            padding: 20px 22px;
+            box-shadow: 0 15px 40px rgba(2, 6, 23, 0.32);
+        }
+
+        .topbar-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .eyebrow {
+            font-size: 0.72rem;
+            letter-spacing: 0.2em;
+            text-transform: uppercase;
+            color: var(--accent-blue);
+            margin-bottom: 8px;
+            opacity: 0.8;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: clamp(2rem, 3vw, 2.9rem);
+            line-height: 1.1;
+            color: white;
+        }
+
+        .live-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 16px;
+            border: 1px solid rgba(52, 211, 153, 0.35);
+            background: rgba(52, 211, 153, 0.08);
+            border-radius: 999px;
+            color: #d1fae5;
+            font-size: 0.75rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+
+        .logout-btn {
+            border: 1px solid rgba(239, 68, 68, 0.35);
+            background: rgba(239, 68, 68, 0.08);
+            color: #fecaca;
+            border-radius: 999px;
+            padding: 10px 16px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .logout-btn:hover {
+            background: rgba(239, 68, 68, 0.16);
+        }
+
+        .live-dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: var(--accent-green);
+            box-shadow: 0 0 14px rgba(52, 211, 153, 0.9);
+            display: inline-block;
+            animation: pulse 1.8s infinite ease-in-out;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.25); opacity: 0.6; }
+        }
+
+        .panel,
+        .control-panel,
+        .assessment-box,
+        .metric-card {
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid var(--panel-border);
+            box-shadow: 0 12px 42px rgba(2, 6, 23, 0.42);
+            backdrop-filter: blur(12px);
+        }
+
+        .control-panel {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: end;
+            gap: 18px;
+            padding: 20px 22px;
+            border-radius: 20px;
+            margin-bottom: 18px;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            flex: 1 1 180px;
+            min-width: 160px;
+        }
+
+        label {
+            font-size: 0.72rem;
+            color: var(--muted);
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+        }
+
+        select,
+        input {
+            width: 100%;
+            background: rgba(15, 23, 42, 0.9);
+            border: 1px solid rgba(148, 163, 184, 0.3);
+            color: white;
+            padding: 0.85rem 1rem;
+            border-radius: 12px;
+            font-size: 1rem;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        select:focus,
+        input:focus {
+            outline: none;
+            border-color: rgba(56, 189, 248, 0.8);
+            box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.14);
+        }
+
+        .toggle-buttons {
+            display: inline-flex;
+            gap: 10px;
+            background: rgba(15, 23, 42, 0.8);
+            padding: 8px;
+            border-radius: 12px;
+            border: 1px solid rgba(148, 163, 184, 0.2);
+        }
+
+        .toggle-btn {
+            border: none;
+            background: transparent;
+            color: var(--muted);
+            padding: 0.72rem 1rem;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 700;
+            transition: all 0.2s ease;
+        }
+
+        .toggle-btn.active {
+            background: linear-gradient(135deg, var(--accent-blue), #67e8f9);
+            color: #082f49;
+            box-shadow: 0 12px 24px rgba(56, 189, 248, 0.35);
+        }
+
+        .action-btn {
+            border: none;
+            padding: 0.9rem 1.5rem;
+            border-radius: 12px;
+            background: linear-gradient(135deg, var(--accent-green), #6ee7b7);
+            color: #052e2b;
+            font-size: 0.98rem;
+            font-weight: 800;
+            cursor: pointer;
+            box-shadow: 0 14px 28px rgba(52, 211, 153, 0.25);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .action-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 18px 32px rgba(52, 211, 153, 0.32);
+        }
+
+        .dashboard-grid { display: grid; gap: 22px; }
+
+        .summary-strip {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(180px, 1fr));
+            gap: 18px;
+            margin-bottom: 18px;
+        }
+
+        .summary-card {
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid var(--panel-border);
+            border-radius: 16px;
+            padding: 16px 18px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            box-shadow: 0 10px 24px rgba(2, 6, 23, 0.3);
+        }
+
+        .summary-card.accent {
+            background: linear-gradient(135deg, rgba(56, 189, 248, 0.12), rgba(52, 211, 153, 0.08));
+        }
+
+        .summary-label {
+            font-size: 0.68rem;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--muted);
+        }
+
+        .summary-card strong {
+            font-size: clamp(1.1rem, 2vw, 1.6rem);
+            letter-spacing: -0.03em;
+        }
+
+        .summary-card:nth-child(2) strong,
+        .summary-card:nth-child(3) strong {
+            color: white;
+        }
+
+        .metrics-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 18px;
+        }
+
+        .metric-card {
+            border-radius: 18px;
+            padding: 18px 20px 16px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .metric-card::before {
+            content: "";
+            position: absolute;
+            inset: 0 auto auto 0;
+            width: 100%;
+            height: 4px;
+            background: linear-gradient(90deg, var(--accent-green), var(--accent-blue));
+        }
+
+        .metric-label {
+            color: var(--muted);
+            font-size: 0.72rem;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            font-weight: 700;
+        }
+
+        .metric-value {
+            margin-top: 12px;
+            font-size: clamp(1.5rem, 3vw, 2.2rem);
+            font-weight: 800;
+            letter-spacing: -0.04em;
+        }
+
+        .layout-split {
+            display: grid;
+            grid-template-columns: minmax(0, 2.15fr) minmax(280px, 0.85fr);
+            gap: 22px;
+        }
+
+        .charts-container {
+            display: flex;
+            flex-direction: column;
+            gap: 22px;
+        }
+
+        .panel {
+            border-radius: 22px;
+            padding: 18px 18px 12px;
+        }
+
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        .panel-header.smaller { margin-bottom: 8px; }
+
+        .section-kicker {
+            font-size: 0.7rem;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin-bottom: 6px;
+        }
+
+        h3 {
+            margin: 0;
+            font-size: 1.05rem;
+            color: white;
+        }
+
+        .ticker-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 72px;
+            padding: 8px 12px;
+            border-radius: 999px;
+            background: rgba(56, 189, 248, 0.12);
+            border: 1px solid rgba(56, 189, 248, 0.32);
+            color: var(--accent-blue);
+            font-size: 0.8rem;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        #candleChart, #rsiChart {
+            height: 360px;
+            width: 100%;
+        }
+
+        .compact #rsiChart { height: 220px; }
+
+        .assessment-box {
+            border-radius: 22px;
+            padding: 18px 18px 8px;
+        }
+
+        .stat-line {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px dashed rgba(148, 163, 184, 0.25);
+            color: var(--muted);
+            font-size: 0.95rem;
+        }
+
+        .metric-mini {
+            font-size: 1rem;
+            font-weight: 800;
+            color: var(--accent-blue);
+        }
+
+        .table-title {
+            margin-top: 22px;
+            color: var(--muted);
+            font-size: 0.72rem;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            font-weight: 700;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 12px;
+            font-size: 0.84rem;
+            text-align: left;
+        }
+
+        th {
+            color: var(--muted);
+            padding-bottom: 10px;
+            border-bottom: 2px solid rgba(148, 163, 184, 0.2);
+            font-weight: 700;
+        }
+
+        td {
+            padding: 9px 0;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+            color: white;
+        }
+
+        .loading {
+            display: none;
+            padding: 14px 18px;
+            border-radius: 12px;
+            background: rgba(56, 189, 248, 0.12);
+            border: 1px solid rgba(56, 189, 248, 0.25);
+            color: var(--accent-blue);
+            font-weight: 700;
+            margin-bottom: 18px;
+        }
+
+        @media (max-width: 900px) {
+            .layout-split { grid-template-columns: 1fr; }
+            .topbar { align-items: flex-start; flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+<div class="app-shell">
+    <aside class="sidebar">
+        <div class="brand-block">Market Intel</div>
+        <nav class="side-nav">
+            <a class="nav-item active" href="/dashboard">Dashboard</a>
+            <a class="nav-item" href="/watchlist">Watchlist</a>
+            <a class="nav-item" href="/portfolio">Portfolio</a>
+            <a class="nav-item" href="/profile">Profile</a>
+            <a class="nav-item" href="/admin">Admin</a>
+        </nav>
+
+        <div class="mini-panel">
+            <div class="mini-label">Portfolio Value</div>
+            <div class="mini-value">$128.4K</div>
+            <div class="mini-trend positive">+4.8% this month</div>
+        </div>
+    </aside>
+
+    <main class="content-panel">
+        <header class="topbar">
+            <div>
+                <div class="eyebrow">Market Intelligence Suite</div>
+                <h1>Technical Analytics Dashboard</h1>
+            </div>
+            <div class="topbar-actions">
+                <div class="live-pill"><span class="live-dot"></span><span id="liveStatusText">Live signal feed</span> <span id="lastUpdated" style="opacity: 0.8; margin-left: 8px;">--:--</span></div>
+                <button class="logout-btn" onclick="window.location.href='/logout'">Logout</button>
+            </div>
+        </header>
+
+        <div class="control-panel">
+            <div class="control-group">
+                <label>Asset Selector</label>
+                <select id="tickerSelect">
+                    <option value="AAPL">Apple (AAPL)</option>
+                    <option value="NVDA">NVIDIA (NVDA)</option>
+                    <option value="TSLA">Tesla (TSLA)</option>
+                    <option value="MSFT">Microsoft (MSFT)</option>
+                    <option value="CUSTOM">-- Custom Manual Input --</option>
+                </select>
+            </div>
+
+            <div class="control-group" id="customInputGroup" style="display: none;">
+                <label>Custom Ticker</label>
+                <input type="text" id="customTickerInput" placeholder="EX: GOOGL">
+            </div>
+
+            <div class="control-group">
+                <label>Forecast Horizon</label>
+                <div class="toggle-buttons">
+                    <button class="toggle-btn" data-days="1">1-Day</button>
+                    <button class="toggle-btn active" data-days="5">5-Day</button>
+                    <button class="toggle-btn" data-days="7">7-Day</button>
+                </div>
+            </div>
+
+            <button id="executeBtn" class="action-btn">Run Engine</button>
+        </div>
+
+        <div id="loadingState" class="loading">⚙️ Pulling market data and fitting model weights…</div>
+
+        <div class="dashboard-grid" id="dashboardContent">
+            <div class="summary-strip">
+                <div class="summary-card accent">
+                    <span class="summary-label">Trend bias</span>
+                    <strong id="trendBias">Neutral</strong>
+                </div>
+                <div class="summary-card">
+                    <span class="summary-label">Signal</span>
+                    <strong id="signalLabel">Awaiting signal</strong>
+                </div>
+                <div class="summary-card">
+                    <span class="summary-label">Latest close</span>
+                    <strong id="latestClose">$0.00</strong>
+                </div>
+            </div>
+
+            <div class="metrics-row" id="metricsDisplayContainer"></div>
+
+            <div class="layout-split" style="margin-top: 18px;">
+                <div class="panel" style="padding: 18px;">
+                    <div class="panel-header smaller">
+                        <div>
+                            <div class="section-kicker">Watchlist</div>
+                            <h3>Saved symbols</h3>
+                        </div>
+                    </div>
+                    <form id="watchlistForm" style="display: flex; gap: 10px; margin: 14px 0 12px;">
+                        <input id="watchTickerInput" type="text" placeholder="Add ticker (AAPL)" style="flex: 1; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(148,163,184,0.25); background: rgba(15,23,42,0.8); color: white;" />
+                        <button type="submit" class="action-btn" style="padding: 10px 16px;">Add</button>
+                    </form>
+                    <ul id="watchlistList" style="margin: 0; padding-left: 18px; color: #cbd5e1; line-height: 1.8;">
+                        <li>No watchlist entries yet.</li>
+                    </ul>
+                </div>
+
+                <div class="panel" style="padding: 18px;">
+                    <div class="panel-header smaller">
+                        <div>
+                            <div class="section-kicker">Portfolio</div>
+                            <h3>Position manager</h3>
+                        </div>
+                    </div>
+                    <form id="portfolioForm" style="display: grid; gap: 10px; margin: 14px 0 12px;">
+                        <input id="positionTicker" type="text" placeholder="Ticker (AAPL)" style="padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(148,163,184,0.25); background: rgba(15,23,42,0.8); color: white;" />
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                            <input id="positionQty" type="number" min="1" step="1" placeholder="Quantity" style="padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(148,163,184,0.25); background: rgba(15,23,42,0.8); color: white;" />
+                            <input id="positionCost" type="number" min="0" step="0.01" placeholder="Avg cost" style="padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(148,163,184,0.25); background: rgba(15,23,42,0.8); color: white;" />
+                        </div>
+                        <input id="positionNotes" type="text" placeholder="Notes (optional)" style="padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(148,163,184,0.25); background: rgba(15,23,42,0.8); color: white;" />
+                        <button type="submit" class="action-btn" style="padding: 10px 16px;">Add Position</button>
+                    </form>
+                    <ul id="portfolioList" style="margin: 0; padding-left: 18px; color: #cbd5e1; line-height: 1.8;">
+                        <li>No portfolio positions yet.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="layout-split">
+                <div class="charts-container">
+                    <div class="chart-box panel">
+                        <div class="panel-header">
+                            <div>
+                                <div class="section-kicker">Price action</div>
+                                <h3>Intraday candlestick view</h3>
+                            </div>
+                            <span class="ticker-badge" id="tickerBadge">AAPL</span>
+                        </div>
+                        <div id="candleChart"></div>
+                    </div>
+
+                    <div class="chart-box panel compact">
+                        <div class="panel-header smaller">
+                            <div>
+                                <div class="section-kicker">Momentum</div>
+                                <h3>RSI oscillator</h3>
+                            </div>
+                        </div>
+                        <div id="rsiChart"></div>
+                    </div>
+                </div>
+
+                <aside class="assessment-box panel">
+                    <div class="panel-header smaller">
+                        <div>
+                            <div class="section-kicker">Performance</div>
+                            <h3>Model accuracy</h3>
+                        </div>
+                    </div>
+                    <div class="stat-line">
+                        <span>Mean Squared Error</span>
+                        <span id="mseValue" class="metric-mini accent">0.0000</span>
+                    </div>
+                    <div class="stat-line">
+                        <span>Mean Absolute Error</span>
+                        <span id="maeValue" class="metric-mini accent">0.0000</span>
+                    </div>
+
+                    <div class="table-title">Recent forecast log</div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Actual</th>
+                                <th>Pred</th>
+                                <th>Var</th>
+                            </tr>
+                        </thead>
+                        <tbody id="logTableBody"></tbody>
+                    </table>
+                </aside>
+            </div>
+        </div>
+    </main>
+</div>
+<script src="script.js"></script>
+</body>
+</html>
