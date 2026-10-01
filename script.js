@@ -3,46 +3,54 @@ let rsiChartInstance = null;
 let comparisonChartInstance = null;
 let selectedHorizonDays = 5;
 
-function formatMoney(value) {
-    return `$${Number(value).toFixed(2)}`;
+function getSelectedTicker() {
+    const dropdown = document.getElementById('tickerSelect');
+    if (!dropdown) return '';
+    return dropdown.value === 'CUSTOM'
+        ? document.getElementById('customTickerInput').value.trim().toUpperCase()
+        : dropdown.value;
 }
 
-function buildProjectedCandles(actualCandles, predictions) {
-    if (!actualCandles || actualCandles.length === 0) return [];
+function formatMoney(value, ticker = getSelectedTicker()) {
+    const currency = ticker.endsWith('.NS') || ticker.endsWith('.BO') ? 'INR' : 'USD';
+    const locale = currency === 'INR' ? 'en-IN' : 'en-US';
+    return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(Number(value));
+}
+
+function buildProjectedCandles(actualCandles, predictions, forecastDates, tradingDates) {
+    if (!actualCandles || actualCandles.length === 0 || !forecastDates) return [];
 
     const lastActual = actualCandles[actualCandles.length - 1];
     const lastClose = lastActual.y[3];
-    const lastDate = new Date(lastActual.x);
-    let prevClose = lastClose;
+    const tradingDateSet = new Set(tradingDates || []);
     const projected = [];
 
     predictions.forEach((price, idx) => {
-        const open = idx === 0 ? prevClose : projected[idx - 1].y[3];
+        const open = idx === 0 ? lastClose : projected[idx - 1].y[3];
         const close = Number(price);
-        const high = Math.max(open, close) * 1.012;
-        const low = Math.min(open, close) * 0.988;
-        const futureDate = new Date(lastDate);
-        futureDate.setDate(lastDate.getDate() + idx + 1);
+        const isTradingDate = tradingDateSet.has(forecastDates[idx]);
+        const high = isTradingDate ? Math.max(open, close) * 1.012 : open;
+        const low = isTradingDate ? Math.min(open, close) * 0.988 : open;
+        const candleClose = isTradingDate ? close : open;
 
         projected.push({
-            x: futureDate.toISOString().slice(0, 10),
-            y: [Number(open.toFixed(2)), Number(high.toFixed(2)), Number(low.toFixed(2)), Number(close.toFixed(2))],
+            x: forecastDates[idx],
+            y: [Number(open.toFixed(2)), Number(high.toFixed(2)), Number(low.toFixed(2)), Number(candleClose.toFixed(2))],
             fillColor: '#38bdf8'
         });
-
-        prevClose = close;
     });
 
     return projected;
 }
 
-function renderMetricCards(predictions) {
+function renderMetricCards(predictions, forecastDates) {
     const metricsContainer = document.getElementById('metricsDisplayContainer');
     if (!metricsContainer) return;
     metricsContainer.innerHTML = '';
 
     predictions.forEach((price, idx) => {
-        const trend = idx === 0 ? 'Immediate signal' : `Forward ${idx + 1}d`;
+        const forecastDate = new Date(`${forecastDates[idx]}T00:00:00`);
+        const trend = forecastDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
         metricsContainer.innerHTML += `
             <div class="metric-card">
                 <div class="metric-label">${trend}</div>
@@ -135,7 +143,7 @@ function renderWatchlist(items) {
 function renderPortfolio(items) {
     const list = document.getElementById('portfolioList');
     if (!list) return;
-    list.innerHTML = items.length ? items.map(item => `<li>${item.ticker} · ${item.quantity} shares · ${formatMoney(item.avg_cost)}</li>`).join('') : '<li>No portfolio positions yet.</li>';
+    list.innerHTML = items.length ? items.map(item => `<li>${item.ticker} · ${item.quantity} shares · ${formatMoney(item.avg_cost, item.ticker)}</li>`).join('') : '<li>No portfolio positions yet.</li>';
 }
 
 async function loadUserData() {
@@ -170,7 +178,7 @@ async function loadMarketQuote() {
         }
         if (lastUpdated) {
             const date = new Date(data.updated_at || Date.now());
-            lastUpdated.textContent = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            lastUpdated.textContent = `As of ${date.toLocaleDateString([], { month: 'short', day: 'numeric' })}`;
         }
     } catch (err) {
         console.warn('Live quote refresh failed', err);
@@ -246,14 +254,14 @@ async function loadDashboardAnalytics() {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Request failed');
 
-        renderMetricCards(data.predictions);
+        renderMetricCards(data.predictions, data.forecast_dates);
         updateSummary(data);
         document.getElementById('mseValue').innerText = Number(data.accuracy_metrics.mse).toFixed(4);
         document.getElementById('maeValue').innerText = Number(data.accuracy_metrics.mae).toFixed(4);
         renderHistoryTable(data.accuracy_metrics.history_table);
         renderModelComparison(data.model_comparison || data.accuracy_metrics.model_comparison || []);
 
-        const projectedCandles = buildProjectedCandles(data.candlestick_series, data.predictions);
+        const projectedCandles = buildProjectedCandles(data.candlestick_series, data.predictions, data.forecast_dates, data.trading_dates);
         const candleOptions = {
             series: [
                 { name: 'Historical Price', type: 'candlestick', data: data.candlestick_series, color: '#22c55e' },
@@ -286,7 +294,7 @@ async function loadDashboardAnalytics() {
             yaxis: {
                 labels: {
                     style: { colors: '#94a3b8' },
-                    formatter: (v) => `$${Number(v).toFixed(2)}`
+                    formatter: (v) => formatMoney(v, ticker)
                 }
             },
             tooltip: {

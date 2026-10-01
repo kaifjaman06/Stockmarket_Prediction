@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 import yfinance as yf
+import exchange_calendars as xcals
 import tensorflow as tf
 from flask import Flask, jsonify, request, send_from_directory, redirect, session, render_template_string
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -286,40 +287,69 @@ def get_ohlc_indicators(ticker):
             SELECT trade_date, open_price, high_price, low_price, close_price, ema_20, rsi_14 
             FROM stocks_cache WHERE ticker=? ORDER BY trade_date ASC
         """, conn, params=(ticker,))
-    
-    if df_local.empty or len(df_local) < 250:
-        print(f"🔄 Cache miss. Ingesting historical vectors from yfinance...")
-        data = yf.download(ticker, start="2024-01-01", end="2026-09-26")
-        if data.empty:
-            return None
-        
-        df_fresh = pd.DataFrame()
-        df_fresh['trade_date'] = data.index.strftime('%Y-%m-%d')
-        df_fresh['close_price'] = data['Close'].values.flatten()
-        df_fresh['open_price'] = data['Open'].values.flatten()
-        df_fresh['high_price'] = data['High'].values.flatten()
-        df_fresh['low_price'] = data['Low'].values.flatten()
-        
-        # Calculate Technical Indicators
-        df_fresh['ema_20'] = df_fresh['close_price'].ewm(span=20, adjust=False).mean()
-        delta = df_fresh['close_price'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / (loss + 1e-9)
-        df_fresh['rsi_14'] = 100 - (100 / (1 + rs))
-        df_fresh['rsi_14'] = df_fresh['rsi_14'].fillna(50)
-        
-        with sqlite3.connect(DB_FILE) as conn:
-            cursor = conn.cursor()
-            for _, row in df_fresh.iterrows():
-                cursor.execute("""
-                    INSERT OR IGNORE INTO stocks_cache (ticker, trade_date, open_price, high_price, low_price, close_price, ema_20, rsi_14)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (ticker, row['trade_date'], row['open_price'], row['high_price'], row['low_price'], row['close_price'], row['ema_20'], row['rsi_14']))
-            conn.commit()
-        return df_fresh
-        
-    return df_local
+
+    today = pd.Timestamp.now().date()
+    latest_cached_date = pd.to_datetime(df_local['trade_date'].iloc[-1]).date() if not df_local.empty else None
+    if not df_local.empty and len(df_local) >= 250 and latest_cached_date >= today:
+        return df_local
+
+    start_date = "2024-01-01" if latest_cached_date is None or len(df_local) < 250 else (pd.Timestamp(latest_cached_date) - pd.Timedelta(days=7)).strftime('%Y-%m-%d')
+    end_date = (today + timedelta(days=1)).isoformat()
+    data = yf.download(ticker, start=start_date, end=end_date, progress=False)
+    fresh_rows = []
+
+    if not data.empty:
+        df_daily = pd.DataFrame({
+            'trade_date': data.index.strftime('%Y-%m-%d'),
+            'open_price': data['Open'].values.flatten(),
+            'high_price': data['High'].values.flatten(),
+            'low_price': data['Low'].values.flatten(),
+            'close_price': data['Close'].values.flatten()
+        }).dropna(subset=['open_price', 'high_price', 'low_price', 'close_price'])
+        fresh_rows.append(df_daily)
+
+    intraday = yf.Ticker(ticker).history(period='5d', interval='1m', prepost=False)
+    if not intraday.empty:
+        intraday = intraday.dropna(subset=['Open', 'High', 'Low', 'Close'])
+        if not intraday.empty:
+            df_intraday = pd.DataFrame({
+                'trade_date': intraday.index.strftime('%Y-%m-%d'),
+                'open_price': intraday['Open'].to_numpy(),
+                'high_price': intraday['High'].to_numpy(),
+                'low_price': intraday['Low'].to_numpy(),
+                'close_price': intraday['Close'].to_numpy()
+            }).groupby('trade_date', as_index=False).agg({
+                'open_price': 'first',
+                'high_price': 'max',
+                'low_price': 'min',
+                'close_price': 'last'
+            })
+            daily_dates = set(fresh_rows[0]['trade_date']) if fresh_rows else set()
+            fresh_rows.append(df_intraday[~df_intraday['trade_date'].isin(daily_dates)])
+
+    if not fresh_rows:
+        return df_local if not df_local.empty else None
+
+    df_fresh = pd.concat(fresh_rows, ignore_index=True)
+    df_updated = pd.concat([df_local, df_fresh], ignore_index=True)
+    df_updated = df_updated.drop_duplicates(subset=['trade_date'], keep='last').sort_values('trade_date').reset_index(drop=True)
+    df_updated['ema_20'] = df_updated['close_price'].ewm(span=20, adjust=False).mean()
+    delta = df_updated['close_price'].diff()
+    gain = delta.where(delta > 0, 0).rolling(window=14).mean()
+    loss = -delta.where(delta < 0, 0).rolling(window=14).mean()
+    rs = gain / (loss + 1e-9)
+    df_updated['rsi_14'] = (100 - (100 / (1 + rs))).fillna(50)
+
+    with sqlite3.connect(DB_FILE) as conn:
+        conn.executemany("""
+            INSERT OR REPLACE INTO stocks_cache (ticker, trade_date, open_price, high_price, low_price, close_price, ema_20, rsi_14)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, [
+            (ticker, row.trade_date, row.open_price, row.high_price, row.low_price, row.close_price, row.ema_20, row.rsi_14)
+            for row in df_updated.itertuples(index=False)
+        ])
+        conn.commit()
+    return df_updated
 
 def calculate_accuracy_metrics(ticker):
     with sqlite3.connect(DB_FILE) as conn:
@@ -363,7 +393,21 @@ def calculate_accuracy_metrics(ticker):
         "mae": round(float(np.mean(errors_abs)), 4)
     }
 
-def run_lstm_multi_predict(df, days_to_predict, ticker):
+def get_forecast_schedule(df, ticker, days_to_predict):
+    calendar_name = "XBOM" if ticker.upper().endswith((".NS", ".BO")) else "XNYS"
+    calendar = xcals.get_calendar(calendar_name)
+    last_trade_date = pd.Timestamp(df['trade_date'].iloc[-1]).date()
+    today = pd.Timestamp.now(tz=calendar.tz).date()
+    first_date = max(last_trade_date + timedelta(days=1), today)
+    forecast_dates = [first_date + timedelta(days=offset) for offset in range(max(1, int(days_to_predict)))]
+    sessions = calendar.sessions_in_range(forecast_dates[0], forecast_dates[-1])
+    trading_dates = {session.date() for session in sessions}
+    return forecast_dates, [date for date in forecast_dates if date in trading_dates]
+
+
+def run_lstm_multi_predict(df, forecast_dates, ticker):
+    if not forecast_dates:
+        return []
     if len(df) < 61:
         raise ValueError("Not enough market data for the LSTM forecast window.")
 
@@ -394,7 +438,7 @@ def run_lstm_multi_predict(df, days_to_predict, ticker):
     current_window = list(scaled_data[-60:, 0])
     predictions_scaled = []
 
-    for _ in range(max(1, int(days_to_predict))):
+    for _ in forecast_dates:
         input_sample = np.array(current_window[-60:], dtype=np.float32).reshape(1, 60, 1)
         pred_scaled = float(model.predict(input_sample, verbose=0)[0, 0])
         predictions_scaled.append(pred_scaled)
@@ -406,17 +450,16 @@ def run_lstm_multi_predict(df, days_to_predict, ticker):
         last_trade_date = pd.to_datetime(df['trade_date'].iloc[-1])
         with sqlite3.connect(DB_FILE) as conn:
             cursor = conn.cursor()
-            for offset, pred_val in enumerate(real_predictions[:max(1, int(days_to_predict))], start=1):
-                target_date = (last_trade_date + pd.Timedelta(days=offset)).strftime('%Y-%m-%d')
+            for target_date, pred_val in zip(forecast_dates, real_predictions):
                 cursor.execute(
                     "INSERT OR REPLACE INTO predictions_log (ticker, target_date, predicted_val) VALUES (?, ?, ?)",
-                    (ticker, target_date, float(pred_val))
+                    (ticker, pd.Timestamp(target_date).strftime('%Y-%m-%d'), float(pred_val))
                 )
             conn.commit()
     except Exception as db_err:
         print(f"Bypassed logging: {db_err}")
 
-    return [float(p) for p in real_predictions[:max(1, int(days_to_predict))]]
+    return [float(p) for p in real_predictions[:len(forecast_dates)]]
 
 # ==========================================
 # 🌐 LOGIN + ROUTING ENDPOINTS
@@ -1062,12 +1105,21 @@ def live_market_quote():
     ticker = request.args.get('ticker', 'AAPL').upper()
     try:
         ticker_data = yf.Ticker(ticker)
-        history = ticker_data.history(period='5d', interval='1m')
-        if history.empty:
-            return jsonify({"error": f"No live quote available for {ticker}."}), 404
+        history = ticker_data.history(period='5d', interval='1m', prepost=False)
+        history = history.dropna(subset=['Close'])
+        session_closes = history['Close'].groupby(history.index.strftime('%Y-%m-%d')).last() if not history.empty else pd.Series(dtype=float)
+        session_closes = session_closes.replace([np.inf, -np.inf], np.nan).dropna()
+        if session_closes.empty:
+            cached = get_ohlc_indicators(ticker)
+            if cached is None or cached.empty:
+                return jsonify({"error": f"No live quote available for {ticker}."}), 404
+            session_closes = cached['close_price'].groupby(cached['trade_date']).last()
+            session_closes = session_closes.replace([np.inf, -np.inf], np.nan).dropna()
+            if session_closes.empty:
+                return jsonify({"error": f"No live quote available for {ticker}."}), 404
 
-        latest = float(history['Close'].iloc[-1])
-        previous = float(history['Close'].iloc[-2]) if len(history) > 1 else latest
+        latest = float(session_closes.iloc[-1])
+        previous = float(session_closes.iloc[-2]) if len(session_closes) > 1 else latest
         change = latest - previous
         percent_change = (change / previous) * 100 if previous else 0.0
 
@@ -1076,7 +1128,7 @@ def live_market_quote():
             "price": round(latest, 2),
             "change": round(change, 2),
             "percent_change": round(percent_change, 2),
-            "updated_at": datetime.utcnow().isoformat() + 'Z'
+            "updated_at": session_closes.index[-1]
         })
     except Exception as exc:
         return jsonify({"error": f"Live quote fetch failed: {str(exc)}"}), 400
@@ -1114,8 +1166,17 @@ def predict():
         elif rsi_v > 65 or (idx > 0 and df_recent.loc[idx - 1, 'close_price'] > df_recent.loc[idx - 1, 'ema_20'] and close_p < ema_v):
             sell_signals.append({"x": date_label, "y": close_p})
 
+    forecast_dates, trading_dates = get_forecast_schedule(df, ticker, days)
+
     try:
-        forecast_array = run_lstm_multi_predict(df, days, ticker)
+        session_predictions = run_lstm_multi_predict(df, trading_dates, ticker)
+        predictions_by_date = dict(zip(trading_dates, session_predictions))
+        forecast_array = []
+        previous_price = float(df['close_price'].iloc[-1])
+        for forecast_date in forecast_dates:
+            if forecast_date in predictions_by_date:
+                previous_price = predictions_by_date[forecast_date]
+            forecast_array.append(round(previous_price, 2))
         accuracy_data = calculate_accuracy_metrics(ticker)
     except Exception as e:
         return jsonify({"error": f"Computational core error: {str(e)}"}), 500
@@ -1127,7 +1188,9 @@ def predict():
         "rsi_series": rsi_series,
         "buy_signals": buy_signals,
         "sell_signals": sell_signals,
-        "predictions": [round(float(p), 2) for p in forecast_array],
+        "predictions": forecast_array,
+        "forecast_dates": [forecast_date.isoformat() for forecast_date in forecast_dates],
+        "trading_dates": [trading_date.isoformat() for trading_date in trading_dates],
         "accuracy_metrics": accuracy_data,
         "model_comparison": accuracy_data.get('model_comparison', [])
     })
